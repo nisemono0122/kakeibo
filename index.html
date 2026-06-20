@@ -276,10 +276,12 @@
   <div id="analysis" style="display:none"></div>
 
   <div class="footer">
+    <button id="cloudSync">🔄 クラウド同期</button> ・
     <button id="importStmt">📄 カード明細を取り込み</button><br>
-    データはこの端末のブラウザにのみ保存されます<br>
+    <span id="syncStatus">—</span><br>
     <button id="export">バックアップ書き出し</button> ・
-    <button id="import">読み込み</button>
+    <button id="import">読み込み</button> ・
+    <button id="setPw">パスワード再入力</button>
   </div>
 </div>
 
@@ -1315,9 +1317,69 @@ window.KAKEIBO_EMBEDDED = null;</script>
     alert(added+"件を取り込みました。" + (skipped>0 ? "（重複 "+skipped+"件はスキップ）" : "") + "\nカテゴリは自動推定です。リストでタップして修正できます。");
   };
 
+  // ===== クラウド同期（パスワード暗号化 / AES-GCM） =====
+  const PW_KEY = "kakeibo.pw";
+  function b64e(buf){ const b=new Uint8Array(buf); let s=""; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
+  function b64d(s){ return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); }
+  async function deriveKey(pw, salt){
+    const km = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:150000, hash:"SHA-256"}, km,
+      {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  }
+  async function encryptData(obj, pw){
+    const salt=crypto.getRandomValues(new Uint8Array(16)), iv=crypto.getRandomValues(new Uint8Array(12));
+    const key=await deriveKey(pw, salt);
+    const ct=await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, new TextEncoder().encode(JSON.stringify(obj)));
+    return {v:1, salt:b64e(salt), iv:b64e(iv), ct:b64e(ct)};
+  }
+  async function decryptData(payload, pw){
+    const key=await deriveKey(pw, b64d(payload.salt));
+    const pt=await crypto.subtle.decrypt({name:"AES-GCM", iv:b64d(payload.iv)}, key, b64d(payload.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+  window.kakeiboEncrypt = encryptData;  // 公開ツール用（暗号化を再利用）
+
+  function setSync(msg){ const el=$("syncStatus"); if(el) el.textContent=msg; }
+  function mergeCloud(cloud){
+    const cd = Array.isArray(cloud.data) ? cloud.data : [];
+    const ids = new Set(cd.map(r=>String(r.id)));
+    const localOwn = data.filter(r=> r.src!=="cloud" && !ids.has(String(r.id)));
+    cd.forEach(r=> r.src="cloud");
+    data = cd.concat(localOwn);
+    if(cloud.config && typeof cloud.config==="object"){
+      const c=cloud.config;
+      if(!c.budgets) c.budgets={}; if(!Array.isArray(c.recurring)) c.recurring=[];
+      if(!c.budgetMode) c.budgetMode="manual"; if(typeof c.totalBudget!=="number") c.totalBudget=0;
+      config=c;
+    }
+    saveData(); saveConfig();
+  }
+  async function cloudSync(force){
+    let res;
+    try{ res = await fetch("data.enc?t="+Date.now(), {cache:"no-store"}); }
+    catch(e){ setSync("オフライン（保存済みデータを表示）"); return; }
+    if(!res.ok){ setSync("クラウド未設定"); return; }
+    let payload; try{ payload = await res.json(); }catch(e){ setSync("クラウド読込エラー"); return; }
+    let pw = force ? null : localStorage.getItem(PW_KEY);
+    for(let i=0;i<3;i++){
+      if(!pw){ pw = prompt("家計簿のパスワードを入力してください"); if(pw===null){ setSync("同期キャンセル"); return; } }
+      try{
+        const cloud = await decryptData(payload, pw);
+        localStorage.setItem(PW_KEY, pw);
+        mergeCloud(cloud);
+        applyRecurring(); render();
+        setSync("クラウド同期済み ✓");
+        return;
+      }catch(e){ pw=null; if(i<2) alert("パスワードが違います。もう一度入力してください。"); else setSync("パスワードが一致しません"); }
+    }
+  }
+  $("cloudSync").onclick = ()=> cloudSync(false);
+  $("setPw").onclick = ()=> cloudSync(true);
+
   // 起動
   applyRecurring();
   render();
+  cloudSync(false);
 })();
 </script>
 </body>

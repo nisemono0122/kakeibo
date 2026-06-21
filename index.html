@@ -83,8 +83,10 @@
   .stat .v{font-size:15px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
   .stat .v.plus{color:var(--plus)} .stat .v.minus{color:var(--minus)} .stat .v.save{color:#0ea5e9}
 
-  .brow{margin-bottom:14px}
+  .brow{margin-bottom:14px;cursor:pointer}
   .brow:last-child{margin-bottom:0}
+  .brow:active{opacity:.6}
+  .bhead .chev{color:var(--sub);margin-left:6px;font-weight:400}
   .bhead{display:flex;align-items:center;justify-content:space-between;font-size:14px;margin-bottom:5px}
   .bhead .nm{display:flex;align-items:center;gap:6px;font-weight:600}
   .bhead .rt{font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
@@ -382,6 +384,15 @@
   </div>
 </div>
 
+<!-- カテゴリ明細モーダル -->
+<div class="modal" id="catDetail">
+  <div class="sheet">
+    <h3 id="catDetailTitle">明細</h3>
+    <div id="catDetailBody"></div>
+    <button class="ghost" id="catDetailClose">閉じる</button>
+  </div>
+</div>
+
 <!-- 明細取り込みモーダル -->
 <div class="modal" id="stmtModal">
   <div class="sheet">
@@ -474,6 +485,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   let selDay = null;
   let editMode = "manual";
   let editingId = null;
+  let detailCat = null;
 
   function loadData(){ try{ return JSON.parse(localStorage.getItem(DKEY)) || []; }catch(e){ return []; } }
   function saveData(){ localStorage.setItem(DKEY, JSON.stringify(data)); }
@@ -652,6 +664,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     renderTable();
     renderAnalysis(mk);
     applyView();
+    if(detailCat && $("catDetail").classList.contains("show")) renderCatDetail();
   }
 
   function renderAlerts(byCat, mk){
@@ -708,19 +721,38 @@ window.KAKEIBO_EMBEDDED = null;</script>
         const remain = b - spent, over = remain<0, p = pct(spent,b);
         const ratio = Math.min(spent/b,1)*100;
         const col = over ? "var(--minus)" : ratio>=85 ? "var(--warn)" : c.c;
-        return `<div class="brow">
+        return `<div class="brow" data-cat="${c.k}">
           <div class="bhead"><span class="nm">${c.e} ${c.name}</span>
-            <span class="rt ${over?"over":""}">${over?"超過 "+yen(-remain):"残り "+yen(remain)}</span></div>
+            <span class="rt ${over?"over":""}">${over?"超過 "+yen(-remain):"残り "+yen(remain)}<span class="chev">›</span></span></div>
           <div class="track"><div class="fill" style="width:${ratio}%;background:${col}"></div></div>
           <div class="bsub">${yen(spent)} / ${yen(b)} ・ 達成 ${p}%</div></div>`;
       }
       const ratio = Math.min(spent/maxNB,1)*100;
-      return `<div class="brow">
-        <div class="bhead"><span class="nm">${c.e} ${c.name}</span><span class="rt">予算未設定</span></div>
+      return `<div class="brow" data-cat="${c.k}">
+        <div class="bhead"><span class="nm">${c.e} ${c.name}</span><span class="rt">予算未設定<span class="chev">›</span></span></div>
         <div class="track"><div class="fill" style="width:${ratio}%;background:${c.c};opacity:.5"></div></div>
         <div class="bsub">${yen(spent)}</div></div>`;
     }).join("");
+    box.querySelectorAll(".brow[data-cat]").forEach(el=> el.onclick = ()=> openCatDetail(el.dataset.cat));
   }
+
+  function openCatDetail(cat){ detailCat = cat; $("catDetail").classList.add("show"); renderCatDetail(); }
+  function closeCatDetail(){ detailCat = null; $("catDetail").classList.remove("show"); }
+  function renderCatDetail(){
+    if(!detailCat) return;
+    const ci = catInfo("expense", detailCat);
+    const mk = monthKey(view);
+    const items = data.filter(r=> r.type==="expense" && r.cat===detailCat && r.date.slice(0,7)===mk)
+                      .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+    const total = items.reduce((s,r)=>s+r.amount,0);
+    const b = budgetOf(detailCat);
+    $("catDetailTitle").innerHTML = `${ci.e} ${ci.name} <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}${b>0?" / 予算"+yen(b):""}</span>`;
+    const body = $("catDetailBody");
+    body.innerHTML = items.length ? items.map(oneItemHTML).join("") : '<div class="empty">この月の記録はありません</div>';
+    bindItems(body);
+  }
+  $("catDetailClose").onclick = closeCatDetail;
+  $("catDetail").onclick = e => { if(e.target===$("catDetail")) closeCatDetail(); };
 
   function oneItemHTML(r){
     const ci = catInfo(r.type, r.cat);

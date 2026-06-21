@@ -283,7 +283,8 @@
     <span id="syncStatus">—</span><br>
     <button id="export">バックアップ書き出し</button> ・
     <button id="import">読み込み</button> ・
-    <button id="setPw">パスワード再入力</button>
+    <button id="setPw">パスワード再入力</button> ・
+    <button id="resetSync">🧹 リセット同期</button>
   </div>
 </div>
 
@@ -413,7 +414,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v4";
+  const APP_VERSION = "v5";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -1392,7 +1393,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     const counts={};
     cd.forEach(r=>{ const k=r.date+"|"+r.amount+"|"+(r.memo||"")+"|"+r.type+"|"+r.cat; counts[k]=(counts[k]||0)+1; });
     const deviceOwn=[];
-    data.filter(r=> r.src!=="cloud").forEach(r=>{
+    data.filter(r=> r.src!=="cloud" && !r.auto).forEach(r=>{   // 自動固定費はクラウド管理なので端末側は除去
       const k=r.date+"|"+r.amount+"|"+(r.memo||"")+"|"+r.type+"|"+r.cat;
       if(counts[k]>0){ counts[k]--; } else deviceOwn.push(r);
     });
@@ -1426,6 +1427,13 @@ window.KAKEIBO_EMBEDDED = null;</script>
   }
   $("cloudSync").onclick = ()=> cloudSync(false);
   $("setPw").onclick = ()=> cloudSync(true);
+  $("resetSync").onclick = async ()=>{
+    if(!confirm("この端末のデータを消して、クラウドから取り直します。\n（クラウドの最新が正データになります）よろしいですか？")) return;
+    localStorage.removeItem(DKEY);
+    data = [];
+    saveData();
+    await cloudSync(false);
+  };
 
   // 起動
   applyRecurring();

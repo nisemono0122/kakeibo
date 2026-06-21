@@ -412,6 +412,19 @@ window.KAKEIBO_EMBEDDED = null;</script>
 <script>
 (function(){
   "use strict";
+  // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
+  const APP_VERSION = "v3";
+  (async function(){
+    try{
+      const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
+      if(r.ok){ const j = await r.json();
+        if(j && j.v && j.v!==APP_VERSION && location.search.indexOf("u=")<0){
+          location.replace(location.pathname + "?u=" + encodeURIComponent(j.v));
+          return;
+        }
+      }
+    }catch(e){}
+  })();
   const DKEY = "kakeibo.v1";
   const CKEY = "kakeibo.config.v1";
 

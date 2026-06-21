@@ -413,7 +413,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v3";
+  const APP_VERSION = "v4";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -1387,10 +1387,16 @@ window.KAKEIBO_EMBEDDED = null;</script>
   function setSync(msg){ const el=$("syncStatus"); if(el) el.textContent=msg; }
   function mergeCloud(cloud){
     const cd = Array.isArray(cloud.data) ? cloud.data : [];
-    const ids = new Set(cd.map(r=>String(r.id)));
-    const localOwn = data.filter(r=> r.src!=="cloud" && !ids.has(String(r.id)));
     cd.forEach(r=> r.src="cloud");
-    data = cd.concat(localOwn);
+    // クラウドを正として置き換え。端末だけの手入力は残すが、内容が重複する古い記録は除去
+    const counts={};
+    cd.forEach(r=>{ const k=r.date+"|"+r.amount+"|"+(r.memo||"")+"|"+r.type+"|"+r.cat; counts[k]=(counts[k]||0)+1; });
+    const deviceOwn=[];
+    data.filter(r=> r.src!=="cloud").forEach(r=>{
+      const k=r.date+"|"+r.amount+"|"+(r.memo||"")+"|"+r.type+"|"+r.cat;
+      if(counts[k]>0){ counts[k]--; } else deviceOwn.push(r);
+    });
+    data = cd.concat(deviceOwn);
     if(cloud.config && typeof cloud.config==="object"){
       const c=cloud.config;
       if(!c.budgets) c.budgets={}; if(!Array.isArray(c.recurring)) c.recurring=[];

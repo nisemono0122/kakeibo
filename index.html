@@ -414,7 +414,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v6";
+  const APP_VERSION = "v7";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -579,6 +579,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     config.recurring.forEach(t=>{
       if(!Array.isArray(t.applied)) t.applied=[];
       let [y,m] = t.startMonth.split("-").map(Number);
+      const step = (t.interval && t.interval>0) ? t.interval : 1;  // 1=毎月, 2=2か月ごと(隔月)
       while(true){
         const mk = y+"-"+pad(m);
         if(mk>curMK) break;
@@ -597,12 +598,12 @@ window.KAKEIBO_EMBEDDED = null;</script>
             rec.estimate = true;
           }
           rec.amount = amount;
-          if(t.type==="expense"){ rec.ivc="consume"; if(rec.pay==="credit") rec.billed=false; }
+          if(t.type==="expense"){ rec.ivc = t.ivc || "consume"; if(rec.pay==="credit") rec.billed=false; }
           data.push(rec);
           t.applied.push(mk);
           changed=true;
         }
-        m++; if(m>12){m=1;y++;}
+        m += step; while(m>12){ m-=12; y++; }
       }
     });
     if(changed){ saveData(); saveConfig(); }
@@ -1239,11 +1240,12 @@ window.KAKEIBO_EMBEDDED = null;</script>
       const sign = t.type==="income" ? "+" : "−";
       const pi = payInfo(t.pay);
       const varTxt = t.variable ? "・変動" : "";
+      const freqTxt = (t.interval && t.interval>1) ? (t.interval+"か月ごと") : "毎月";
       const amtTxt = t.variable ? ("目安 "+yen(t.amount)) : (sign+yen(t.amount));
       return `<div class="ritem">
         <span class="ic">${ci.e}</span>
         <div class="mid"><div class="nm">${esc(t.memo||ci.name)}</div>
-          <div class="dt">${ci.name}・毎月${t.day}日${varTxt}${pi?("・"+pi.name):""}${badge}</div></div>
+          <div class="dt">${ci.name}・${freqTxt}${t.day}日${varTxt}${pi?("・"+pi.name):""}${badge}</div></div>
         <span class="am ${amCls}">${amtTxt}</span>
         <button class="del" data-id="${t.id}">✕</button></div>`;
     }).join("");

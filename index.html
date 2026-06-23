@@ -420,7 +420,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v8";
+  const APP_VERSION = "v9";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -509,7 +509,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   let detailCat = null;
 
   function loadData(){ try{ return JSON.parse(localStorage.getItem(DKEY)) || []; }catch(e){ return []; } }
-  function saveData(){ localStorage.setItem(DKEY, JSON.stringify(data)); }
+  function saveData(){ localStorage.setItem(DKEY, JSON.stringify(data)); if(typeof schedulePush==="function") schedulePush(); }
   function loadConfig(){
     let c; try{ c = JSON.parse(localStorage.getItem(CKEY)); }catch(e){}
     if(!c || typeof c!=="object") c = {};
@@ -519,7 +519,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     if(typeof c.totalBudget!=="number") c.totalBudget = 0;
     return c;
   }
-  function saveConfig(){ localStorage.setItem(CKEY, JSON.stringify(config)); }
+  function saveConfig(){ localStorage.setItem(CKEY, JSON.stringify(config)); if(typeof schedulePush==="function") schedulePush(); }
 
   const $ = id => document.getElementById(id);
   const monthKey = d => d.getFullYear()+"-"+pad(d.getMonth()+1);
@@ -1411,6 +1411,21 @@ window.KAKEIBO_EMBEDDED = null;</script>
 
   // ===== クラウド同期（パスワード暗号化 / AES-GCM） =====
   const PW_KEY = "kakeibo.pw";
+  // ===== 自動両方向同期（Firebase Realtime Database）=====
+  const FB_URL = "https://kakeibo-68342-default-rtdb.firebaseio.com/kakeibo.json";
+  let syncReady = false;        // 最新を取り込むまではクラウドへ書き込まない（古い端末で上書き事故を防ぐ）
+  let pushTimer = null;
+  let lastMergeDeviceOwn = 0;   // 同期時、端末だけに有った記録の数（>0ならアップロードが必要）
+  function schedulePush(){ if(!syncReady) return; clearTimeout(pushTimer); pushTimer=setTimeout(cloudPush, 1200); }
+  async function cloudPush(){   // 現在の状態を暗号化してFirebaseへPUT
+    if(!syncReady) return;
+    const pw = localStorage.getItem(PW_KEY); if(!pw) return;
+    try{
+      const payload = await encryptData({v:3, data, config}, pw);
+      const r = await fetch(FB_URL, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+      setSync(r.ok ? "保存＆同期済み ✓" : "クラウド保存に失敗（後で再試行）");
+    }catch(e){ setSync("オフライン（あとで自動同期）"); }
+  }
   function b64e(buf){ const b=new Uint8Array(buf); let s=""; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
   function b64d(s){ return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); }
   async function deriveKey(pw, salt){
@@ -1444,6 +1459,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
       if(counts[k]>0){ counts[k]--; } else deviceOwn.push(r);
     });
     data = cd.concat(deviceOwn);
+    lastMergeDeviceOwn = deviceOwn.length;   // 端末だけに有った記録（>0なら同期後にアップロードする）
     if(cloud.config && typeof cloud.config==="object"){
       const c=cloud.config;
       if(!c.budgets) c.budgets={}; if(!Array.isArray(c.recurring)) c.recurring=[];
@@ -1453,11 +1469,18 @@ window.KAKEIBO_EMBEDDED = null;</script>
     saveData(); saveConfig();
   }
   async function cloudSync(force){
-    let res;
-    try{ res = await fetch("data.enc?t="+Date.now(), {cache:"no-store"}); }
-    catch(e){ setSync("オフライン（保存済みデータを表示）"); return; }
-    if(!res.ok){ setSync("クラウド未設定"); return; }
-    let payload; try{ payload = await res.json(); }catch(e){ setSync("クラウド読込エラー"); return; }
+    syncReady = false;                 // 取り込み完了までは書き込み禁止
+    let payload = null, fromFB = false;
+    // 1) まずFirebase（読み書きできる本番の保管庫）から取得
+    try{
+      const r = await fetch(FB_URL+"?t="+Date.now(), {cache:"no-store"});
+      if(r.ok){ const j = await r.json(); if(j && j.ct){ payload = j; fromFB = true; } }
+    }catch(e){}
+    // 2) Firebaseがダメな時だけ、GitHubの種データ（読み取り専用の保険）にフォールバック
+    if(!payload){
+      try{ const r2 = await fetch("data.enc?t="+Date.now(), {cache:"no-store"}); if(r2.ok) payload = await r2.json(); }catch(e){}
+    }
+    if(!payload){ setSync("オフライン（保存済みデータを表示）"); return; }
     let pw = force ? null : localStorage.getItem(PW_KEY);
     for(let i=0;i<3;i++){
       if(!pw){ pw = prompt("家計簿のパスワードを入力してください"); if(pw===null){ setSync("同期キャンセル"); return; } }
@@ -1466,7 +1489,13 @@ window.KAKEIBO_EMBEDDED = null;</script>
         localStorage.setItem(PW_KEY, pw);
         mergeCloud(cloud);
         applyRecurring(); render();
-        setSync("クラウド同期済み ✓");
+        if(fromFB){
+          syncReady = true;                       // ここからは保存→自動アップロードが有効
+          setSync("クラウド同期済み ✓");
+          if(lastMergeDeviceOwn > 0) schedulePush(); // 端末だけに有った記録をクラウドへ反映
+        } else {
+          setSync("オフライン表示中（編集は接続後に同期）");  // 種データのみ＝書き込みはしない
+        }
         return;
       }catch(e){ pw=null; if(i<2) alert("パスワードが違います。もう一度入力してください。"); else setSync("パスワードが一致しません"); }
     }
@@ -1475,6 +1504,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   $("setPw").onclick = ()=> cloudSync(true);
   $("resetSync").onclick = async ()=>{
     if(!confirm("この端末のデータを消して、クラウドから取り直します。\n（クラウドの最新が正データになります）よろしいですか？")) return;
+    syncReady = false; clearTimeout(pushTimer);   // 取り直し中はクラウドへ書き込まない
     localStorage.removeItem(DKEY);
     data = [];
     saveData();

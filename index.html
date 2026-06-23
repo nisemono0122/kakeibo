@@ -197,10 +197,15 @@
   .amtdisp{font-size:32px;font-weight:800;text-align:right;padding:6px 6px;
     font-variant-numeric:tabular-nums;border-bottom:2px solid var(--line);margin-bottom:12px;color:var(--ink)}
   .amtdisp.zero{color:var(--sub)}
-  .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-  .pad button{padding:15px 0;font-size:21px;font-weight:700;border:none;border-radius:14px;
+  .pad{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px}
+  .pad button{padding:14px 0;font-size:20px;font-weight:700;border:none;border-radius:13px;
     background:var(--bg);color:var(--ink);cursor:pointer}
   .pad button:active{background:var(--line)}
+  .pad button.span2{grid-column:span 2}
+  .pad button.op{background:var(--line);color:var(--accent);font-weight:800}
+  .pad button.op.eq{background:var(--accent);color:#fff}
+  .pad button.op.eq.on{box-shadow:inset 0 0 0 2px var(--accent)}
+  .pad button.fn{color:var(--minus)}
 
   .row{display:flex;gap:10px}
   .row>*{flex:1}
@@ -302,10 +307,11 @@
     <div class="cats" id="catGrid"></div>
     <div class="amtdisp zero" id="amtDisp">¥0</div>
     <div class="pad" id="pad">
-      <button data-d="7">7</button><button data-d="8">8</button><button data-d="9">9</button>
-      <button data-d="4">4</button><button data-d="5">5</button><button data-d="6">6</button>
-      <button data-d="1">1</button><button data-d="2">2</button><button data-d="3">3</button>
-      <button data-d="00">00</button><button data-d="0">0</button><button data-d="back">⌫</button>
+      <button data-d="ac" class="op fn">AC</button><button data-d="div" class="op">÷</button><button data-d="mul" class="op">×</button><button data-d="back" class="op">⌫</button>
+      <button data-d="7">7</button><button data-d="8">8</button><button data-d="9">9</button><button data-d="sub" class="op">−</button>
+      <button data-d="4">4</button><button data-d="5">5</button><button data-d="6">6</button><button data-d="add" class="op">＋</button>
+      <button data-d="1">1</button><button data-d="2">2</button><button data-d="3">3</button><button data-d="eq" class="op eq">=</button>
+      <button data-d="0" class="span2">0</button><button data-d="00" class="span2">00</button>
     </div>
     <div id="formTags"></div>
     <div class="row">
@@ -414,7 +420,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v7";
+  const APP_VERSION = "v8";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -495,6 +501,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   let form = { type:"expense", cat:"food", pay:"cash", billed:false, ivc:"consume", regret:2 };
   let rForm = { type:"expense", cat:"food", variable:false };
   let amountStr = "";
+  let calcAcc = null, calcOp = null, justEq = false;  // 電卓: 累積値 / 保留中の演算子 / 直前に＝を押したか
   let currentView = "list";
   let selDay = null;
   let editMode = "manual";
@@ -1031,11 +1038,34 @@ window.KAKEIBO_EMBEDDED = null;</script>
     document.querySelectorAll("#recType button").forEach(b=> b.classList.toggle("on", b.dataset.k===t));
     buildCats(); renderFormTags();
   }
-  function setAmount(s){
-    amountStr = s;
+  function showCalc(){
     const disp = $("amtDisp");
-    disp.textContent = amountStr ? yen(+amountStr) : "¥0";
-    disp.classList.toggle("zero", !amountStr);
+    const blank = (amountStr==="" && calcAcc===null);
+    let val = amountStr!=="" ? +amountStr : (calcAcc!==null ? calcAcc : 0);
+    disp.textContent = blank ? "¥0" : yen(val);
+    disp.classList.toggle("zero", blank);
+    // ＝の状態表示（保留中の演算子があれば＝を点灯）
+    const eq = document.querySelector('#pad button[data-d="eq"]');
+    if(eq) eq.classList.toggle("on", calcOp!==null);
+  }
+  function setAmount(s){            // 初期化（モーダルを開くとき）。電卓の状態もリセット
+    amountStr = s || "";
+    calcAcc = null; calcOp = null; justEq = false;
+    showCalc();
+  }
+  function applyOp(a, op, b){
+    let r;
+    if(op==="add") r=a+b; else if(op==="sub") r=a-b;
+    else if(op==="mul") r=a*b; else if(op==="div") r=(b===0?a:a/b);
+    else r=b;
+    return Math.round(r);
+  }
+  function calcValue(){             // 今の表示が「保存される金額」
+    if(amountStr!==""){
+      if(calcOp!==null && calcAcc!==null) return applyOp(calcAcc, calcOp, +amountStr);
+      return parseInt(amountStr,10) || 0;
+    }
+    return calcAcc!==null ? calcAcc : 0;
   }
   function openModalWith(state, amount, date, memo, editId, note){
     editingId = editId || null;
@@ -1074,14 +1104,28 @@ window.KAKEIBO_EMBEDDED = null;</script>
 
   $("pad").querySelectorAll("button").forEach(b=> b.onclick = ()=>{
     const d = b.dataset.d;
-    if(d==="back"){ setAmount(amountStr.slice(0,-1)); return; }
+    if(d==="ac"){ amountStr=""; calcAcc=null; calcOp=null; justEq=false; showCalc(); return; }  // 全消去
+    if(d==="back"){ if(amountStr!=="") amountStr=amountStr.slice(0,-1); justEq=false; showCalc(); return; }  // 1桁消す
+    if(d==="add"||d==="sub"||d==="mul"||d==="div"){     // ＋ − × ÷
+      if(amountStr!==""){
+        calcAcc = (calcAcc===null) ? parseInt(amountStr,10) : applyOp(calcAcc, calcOp, parseInt(amountStr,10));
+        amountStr="";
+      } else if(calcAcc===null){ calcAcc=0; }
+      calcOp=d; justEq=false; showCalc(); return;
+    }
+    if(d==="eq"){                                       // ＝
+      if(calcOp!==null && amountStr!==""){ calcAcc=applyOp(calcAcc, calcOp, parseInt(amountStr,10)); amountStr=""; }
+      calcOp=null; justEq=true; showCalc(); return;
+    }
+    // 数字
+    if(justEq){ calcAcc=null; calcOp=null; amountStr=""; justEq=false; }  // ＝の後に数字を押したら新規入力
     if(amountStr.length>=9) return;
-    let next = (amountStr==="" && (d==="0"||d==="00")) ? "" : amountStr + d;
-    setAmount(next);
+    if(amountStr==="" && (d==="0"||d==="00")) { showCalc(); return; }
+    amountStr += d; showCalc();
   });
 
   $("save").onclick = ()=>{
-    const amt = parseInt(amountStr,10);
+    const amt = calcValue();
     if(!amt || amt<=0){ alert("金額を入力してください"); return; }
     const t = finalType(form.type, form.cat);
     const dateStr = $("inDate").value||todayISO();

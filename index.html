@@ -420,7 +420,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v10";
+  const APP_VERSION = "v11";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -515,11 +515,17 @@ window.KAKEIBO_EMBEDDED = null;</script>
     if(!c || typeof c!=="object") c = {};
     if(!c.budgets || typeof c.budgets!=="object") c.budgets = {};
     if(!Array.isArray(c.recurring)) c.recurring = [];
+    if(!Array.isArray(c.deletedIds)) c.deletedIds = [];   // 削除済みID（tombstone）
     if(!c.budgetMode){ c.budgetMode = c.autoBudget ? "income" : "manual"; }   // 旧データ移行
     if(typeof c.totalBudget!=="number") c.totalBudget = 0;
     return c;
   }
   function saveConfig(){ localStorage.setItem(CKEY, JSON.stringify(config)); if(typeof schedulePush==="function") schedulePush(); }
+  function recordDeleted(id){   // 削除した記録のIDを覚える（同期で復活させないため＝tombstone）
+    id = String(id);
+    if(!Array.isArray(config.deletedIds)) config.deletedIds = [];
+    if(!config.deletedIds.includes(id)) config.deletedIds.push(id);
+  }
 
   const $ = id => document.getElementById(id);
   const monthKey = d => d.getFullYear()+"-"+pad(d.getMonth()+1);
@@ -807,7 +813,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     scope.querySelectorAll(".del").forEach(b=> b.onclick = (e)=>{
       e.stopPropagation();
       if(confirm("この記録を削除しますか？")){
-        data = data.filter(x=> String(x.id) !== String(b.dataset.id)); saveData(); render();
+        recordDeleted(b.dataset.id); data = data.filter(x=> String(x.id) !== String(b.dataset.id)); saveData(); saveConfig(); render();
       }
     });
   }
@@ -1152,8 +1158,8 @@ window.KAKEIBO_EMBEDDED = null;</script>
   };
   $("deleteBtn").onclick = ()=>{
     if(editingId && confirm("この記録を削除しますか？")){
-      data = data.filter(x=> String(x.id)!==String(editingId));
-      saveData(); closeModal(); render();
+      recordDeleted(editingId); data = data.filter(x=> String(x.id)!==String(editingId));
+      saveData(); saveConfig(); closeModal(); render();
     }
   };
 
@@ -1430,9 +1436,18 @@ window.KAKEIBO_EMBEDDED = null;</script>
           if(j && j.ct){
             const cloud = await decryptData(j, pw);
             if(cloud && Array.isArray(cloud.data)){
+              // 削除済みID（端末＋クラウドの和集合）を反映＝消した物は足さない・あれば消す
+              const delIds = new Set([
+                ...(Array.isArray(config.deletedIds)?config.deletedIds:[]).map(String),
+                ...((cloud.config&&Array.isArray(cloud.config.deletedIds))?cloud.config.deletedIds:[]).map(String)
+              ]);
+              config.deletedIds = [...delIds];
               const have = new Set(data.map(r=> r.id));
-              const missing = cloud.data.filter(r=> !have.has(r.id));
-              if(missing.length){ missing.forEach(r=> r.src="cloud"); data = data.concat(missing); localStorage.setItem(DKEY, JSON.stringify(data)); render(); }
+              const missing = cloud.data.filter(r=> !have.has(r.id) && !delIds.has(String(r.id)));  // 削除済みは足さない
+              let changed=false;
+              if(missing.length){ missing.forEach(r=> r.src="cloud"); data = data.concat(missing); changed=true; }
+              const before=data.length; data = data.filter(r=> !delIds.has(String(r.id)));  // 他端末が削除した物を消す
+              if(data.length!==before || changed){ localStorage.setItem(DKEY, JSON.stringify(data)); render(); }
             }
           }
         }
@@ -1467,6 +1482,11 @@ window.KAKEIBO_EMBEDDED = null;</script>
   function mergeCloud(cloud){
     const cd = Array.isArray(cloud.data) ? cloud.data : [];
     cd.forEach(r=> r.src="cloud");
+    // 削除済みID（端末＋クラウドの和集合）＝tombstone。どちらかで消したものは全体で除外
+    const delIds = new Set([
+      ...(Array.isArray(config.deletedIds)?config.deletedIds:[]).map(String),
+      ...((cloud.config&&Array.isArray(cloud.config.deletedIds))?cloud.config.deletedIds:[]).map(String)
+    ]);
     // クラウドを正として置き換え。端末だけの手入力は残すが、内容が重複する古い記録は除去
     const counts={};
     cd.forEach(r=>{ const k=r.date+"|"+r.amount+"|"+(r.memo||"")+"|"+r.type+"|"+r.cat; counts[k]=(counts[k]||0)+1; });
@@ -1475,7 +1495,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
       const k=r.date+"|"+r.amount+"|"+(r.memo||"")+"|"+r.type+"|"+r.cat;
       if(counts[k]>0){ counts[k]--; } else deviceOwn.push(r);
     });
-    data = cd.concat(deviceOwn);
+    data = cd.concat(deviceOwn).filter(r=> !delIds.has(String(r.id)));   // 削除済みを除外
     lastMergeDeviceOwn = deviceOwn.length;   // 端末だけに有った記録（>0なら同期後にアップロードする）
     if(cloud.config && typeof cloud.config==="object"){
       const c=cloud.config;
@@ -1483,6 +1503,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
       if(!c.budgetMode) c.budgetMode="manual"; if(typeof c.totalBudget!=="number") c.totalBudget=0;
       config=c;
     }
+    config.deletedIds = [...delIds];   // 和集合を保持（全端末に削除が伝わる）
     saveData(); saveConfig();
   }
   async function cloudSync(force){

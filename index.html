@@ -420,7 +420,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v9";
+  const APP_VERSION = "v10";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -1415,16 +1415,33 @@ window.KAKEIBO_EMBEDDED = null;</script>
   const FB_URL = "https://kakeibo-68342-default-rtdb.firebaseio.com/kakeibo.json";
   let syncReady = false;        // 最新を取り込むまではクラウドへ書き込まない（古い端末で上書き事故を防ぐ）
   let pushTimer = null;
+  let pushing = false;          // 多重push防止
   let lastMergeDeviceOwn = 0;   // 同期時、端末だけに有った記録の数（>0ならアップロードが必要）
   function schedulePush(){ if(!syncReady) return; clearTimeout(pushTimer); pushTimer=setTimeout(cloudPush, 1200); }
-  async function cloudPush(){   // 現在の状態を暗号化してFirebaseへPUT
-    if(!syncReady) return;
+  async function cloudPush(){   // 書き込む前に最新を取り込み（消さず足すだけ）→ 暗号化してPUT。上書き事故を防ぐ
+    if(!syncReady || pushing) return;
     const pw = localStorage.getItem(PW_KEY); if(!pw) return;
+    pushing = true;
     try{
+      // 取りこぼし防止：書き込む直前に最新を取得し、こちらに無いクラウド記録を「足す」（決して消さない）
+      try{
+        const gr = await fetch(FB_URL+"?t="+Date.now(), {cache:"no-store"});
+        if(gr.ok){ const j = await gr.json();
+          if(j && j.ct){
+            const cloud = await decryptData(j, pw);
+            if(cloud && Array.isArray(cloud.data)){
+              const have = new Set(data.map(r=> r.id));
+              const missing = cloud.data.filter(r=> !have.has(r.id));
+              if(missing.length){ missing.forEach(r=> r.src="cloud"); data = data.concat(missing); localStorage.setItem(DKEY, JSON.stringify(data)); render(); }
+            }
+          }
+        }
+      }catch(e){}
       const payload = await encryptData({v:3, data, config}, pw);
       const r = await fetch(FB_URL, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
       setSync(r.ok ? "保存＆同期済み ✓" : "クラウド保存に失敗（後で再試行）");
     }catch(e){ setSync("オフライン（あとで自動同期）"); }
+    finally{ pushing = false; }
   }
   function b64e(buf){ const b=new Uint8Array(buf); let s=""; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
   function b64d(s){ return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); }

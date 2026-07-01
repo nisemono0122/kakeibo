@@ -83,7 +83,8 @@
   #ivc3 .cap{font-size:12px;color:var(--sub);font-weight:700;margin:0 2px 8px}
   #ivc3 .stack{margin-bottom:10px}
   .ivc3grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-  .ivc3grid .box{background:var(--card);border-radius:14px;padding:11px 6px;box-shadow:var(--shadow);text-align:center;border-top:3px solid var(--line)}
+  .ivc3grid .box{background:var(--card);border-radius:14px;padding:11px 6px;box-shadow:var(--shadow);text-align:center;border-top:3px solid var(--line);cursor:pointer}
+  .ivc3grid .box:active{background:var(--line)}
   .ivc3grid .box .t{font-size:11px;color:var(--sub);margin-bottom:3px}
   .ivc3grid .box .v{font-size:16px;font-weight:800}
   .ivc3grid .box .p{font-size:11px;color:var(--sub);margin-top:2px}
@@ -430,7 +431,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v12";
+  const APP_VERSION = "v13";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -656,18 +657,19 @@ window.KAKEIBO_EMBEDDED = null;</script>
     const teTop = ivcSumTop.invest+ivcSumTop.consume+ivcSumTop.waste;
     const ivcBox = $("ivc3");
     if(teTop>0){
-      ivcBox.innerHTML = `<div class="cap">支出の内わけ（投資・消費・浪費）</div>
+      ivcBox.innerHTML = `<div class="cap">支出の内わけ（投資・消費・浪費）<span style="font-weight:400">— タップで明細</span></div>
         <div class="stack">
           <div style="width:${ivcSumTop.invest/teTop*100}%;background:var(--invest)"></div>
           <div style="width:${ivcSumTop.consume/teTop*100}%;background:var(--consume)"></div>
           <div style="width:${ivcSumTop.waste/teTop*100}%;background:var(--waste)"></div>
         </div>
         <div class="ivc3grid">`+
-        IVC.map(v=>`<div class="box" style="border-top-color:${v.c}">
-          <div class="t">${v.e} ${v.name}</div>
+        IVC.map(v=>`<div class="box" data-k="${v.k}" style="border-top-color:${v.c}">
+          <div class="t">${v.e} ${v.name} ›</div>
           <div class="v" style="color:${v.c}">${yen(ivcSumTop[v.k])}</div>
           <div class="p">${pct(ivcSumTop[v.k],teTop)}%</div></div>`).join("")+
         `</div>`;
+      ivcBox.querySelectorAll(".box").forEach(bx=> bx.onclick = ()=> openIvcDetail(bx.dataset.k));
     } else { ivcBox.innerHTML = ""; }
 
     const tb = totalBudget();
@@ -795,16 +797,28 @@ window.KAKEIBO_EMBEDDED = null;</script>
   }
 
   function openCatDetail(cat){ detailCat = cat; $("catDetail").classList.add("show"); renderCatDetail(); }
+  function openIvcDetail(key){ detailCat = "ivc:"+key; $("catDetail").classList.add("show"); renderCatDetail(); }  // 投資/消費/浪費だけの一覧
   function closeCatDetail(){ detailCat = null; $("catDetail").classList.remove("show"); }
   function renderCatDetail(){
     if(!detailCat) return;
-    const ci = catInfo("expense", detailCat);
     const mk = monthKey(view);
-    const items = data.filter(r=> r.type==="expense" && r.cat===detailCat && r.date.slice(0,7)===mk)
-                      .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
-    const total = items.reduce((s,r)=>s+r.amount,0);
-    const b = budgetOf(detailCat);
-    $("catDetailTitle").innerHTML = `${ci.e} ${ci.name} <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}${b>0?" / 予算"+yen(b):""}</span>`;
+    let items, titleHTML;
+    if(String(detailCat).startsWith("ivc:")){          // 三分法での絞り込み（浪費だけ 等）
+      const key = detailCat.slice(4);
+      const vi = ivcInfo(key) || {e:"",name:key};
+      items = data.filter(r=> r.type==="expense" && (r.ivc||"consume")===key && r.date.slice(0,7)===mk)
+                  .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+      const total = items.reduce((s,r)=>s+r.amount,0);
+      titleHTML = `${vi.e} ${vi.name}だけ <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}</span>`;
+    } else {
+      const ci = catInfo("expense", detailCat);
+      items = data.filter(r=> r.type==="expense" && r.cat===detailCat && r.date.slice(0,7)===mk)
+                  .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+      const total = items.reduce((s,r)=>s+r.amount,0);
+      const b = budgetOf(detailCat);
+      titleHTML = `${ci.e} ${ci.name} <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}${b>0?" / 予算"+yen(b):""}</span>`;
+    }
+    $("catDetailTitle").innerHTML = titleHTML;
     const body = $("catDetailBody");
     body.innerHTML = items.length ? items.map(oneItemHTML).join("") : '<div class="empty">この月の記録はありません</div>';
     bindItems(body);

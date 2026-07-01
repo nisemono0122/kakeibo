@@ -87,7 +87,9 @@
   .ivc3grid .box:active{background:var(--line)}
   /* 浪費の後悔度3分割 */
   .regretsplit{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
-  .regretsplit .rbox{background:var(--bg);border-radius:12px;padding:9px 4px;text-align:center}
+  .regretsplit .rbox{background:var(--bg);border-radius:12px;padding:9px 4px;text-align:center;cursor:pointer;border:2px solid transparent}
+  .regretsplit .rbox:active{background:var(--line)}
+  .regretsplit .rbox.sel{border-color:var(--waste);background:rgba(229,72,77,.10)}
   .regretsplit .rbox .re{font-size:20px}
   .regretsplit .rbox .rn{font-size:11px;color:var(--sub)}
   .regretsplit .rbox .rv{font-size:15px;font-weight:800;margin-top:2px}
@@ -438,7 +440,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v14";
+  const APP_VERSION = "v15";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -525,6 +527,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   let editMode = "manual";
   let editingId = null;
   let detailCat = null;
+  let detailRegret = null;   // 浪費明細の後悔度フィルタ（null=全部, 1/2/3）
 
   function loadData(){ try{ return JSON.parse(localStorage.getItem(DKEY)) || []; }catch(e){ return []; } }
   function saveData(){ localStorage.setItem(DKEY, JSON.stringify(data)); if(typeof schedulePush==="function") schedulePush(); }
@@ -804,7 +807,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   }
 
   function openCatDetail(cat){ detailCat = cat; $("catDetail").classList.add("show"); renderCatDetail(); }
-  function openIvcDetail(key){ detailCat = "ivc:"+key; $("catDetail").classList.add("show"); renderCatDetail(); }  // 投資/消費/浪費だけの一覧
+  function openIvcDetail(key){ detailCat = "ivc:"+key; detailRegret = null; $("catDetail").classList.add("show"); renderCatDetail(); }  // 投資/消費/浪費だけの一覧
   function closeCatDetail(){ detailCat = null; $("catDetail").classList.remove("show"); }
   function renderCatDetail(){
     if(!detailCat) return;
@@ -813,17 +816,22 @@ window.KAKEIBO_EMBEDDED = null;</script>
     if(String(detailCat).startsWith("ivc:")){          // 三分法での絞り込み（浪費だけ 等）
       const key = detailCat.slice(4);
       const vi = ivcInfo(key) || {e:"",name:key};
-      items = data.filter(r=> r.type==="expense" && (r.ivc||"consume")===key && r.date.slice(0,7)===mk)
+      const all = data.filter(r=> r.type==="expense" && (r.ivc||"consume")===key && r.date.slice(0,7)===mk)
                   .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
-      const total = items.reduce((s,r)=>s+r.amount,0);
-      titleHTML = `${vi.e} ${vi.name}だけ <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}</span>`;
-      if(key==="waste" && items.length){               // 浪費は後悔度3段階（反省/うーん/まあ許容）で分けて集計
+      const total = all.reduce((s,r)=>s+r.amount,0);
+      if(key==="waste" && all.length){               // 浪費は後悔度3段階（反省/うーん/まあ許容）で分けて表示・絞り込み
         const rSum={1:0,2:0,3:0}, rCnt={1:0,2:0,3:0};
-        items.forEach(r=>{ const g=r.regret||2; rSum[g]+=r.amount; rCnt[g]++; });
-        prefixHTML = `<div class="regretsplit">`+ [3,2,1].map(k=>`<div class="rbox">
+        all.forEach(r=>{ const g=r.regret||2; rSum[g]+=r.amount; rCnt[g]++; });
+        prefixHTML = `<div class="regretsplit">`+ [3,2,1].map(k=>`<div class="rbox${detailRegret===k?' sel':''}" data-r="${k}">
           <div class="re">${REGRET[k].e}</div><div class="rn">${REGRET[k].name}</div>
           <div class="rv" style="color:var(--waste)">${yen(rSum[k])}</div>
           <div class="rc">${rCnt[k]}件・${pct(rSum[k],total)}%</div></div>`).join("") +`</div>`;
+        items = detailRegret ? all.filter(r=>(r.regret||2)===detailRegret) : all;
+        const subT = items.reduce((s,r)=>s+r.amount,0);
+        titleHTML = `${vi.e} ${vi.name}${detailRegret?"・"+REGRET[detailRegret].e+REGRET[detailRegret].name:"だけ"} <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(subT)}${detailRegret?"（タップで全部に戻す）":""}</span>`;
+      } else {
+        items = all;
+        titleHTML = `${vi.e} ${vi.name}だけ <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}</span>`;
       }
     } else {
       const ci = catInfo("expense", detailCat);
@@ -837,6 +845,11 @@ window.KAKEIBO_EMBEDDED = null;</script>
     const body = $("catDetailBody");
     body.innerHTML = prefixHTML + (items.length ? items.map(oneItemHTML).join("") : '<div class="empty">この月の記録はありません</div>');
     bindItems(body);
+    body.querySelectorAll(".rbox").forEach(bx=> bx.onclick = ()=>{   // 後悔度をタップでその段階だけ表示（もう一度で全部）
+      const k = +bx.dataset.r;
+      detailRegret = (detailRegret===k) ? null : k;
+      renderCatDetail();
+    });
   }
   $("catDetailClose").onclick = closeCatDetail;
   $("catDetail").onclick = e => { if(e.target===$("catDetail")) closeCatDetail(); };

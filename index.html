@@ -472,7 +472,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v16c";
+  const APP_VERSION = "v16d";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -759,9 +759,10 @@ window.KAKEIBO_EMBEDDED = null;</script>
 
     // クレジットカード合算（当月）：合計／請求済み／未請求
     const credM = items.filter(r=> r.type==="expense" && r.pay==="credit");
-    const credTot = credM.reduce((s,r)=>s+r.amount,0);
-    const credBilled = credM.filter(r=> r.billed===true).reduce((s,r)=>s+r.amount,0);
-    const credUnb = credM.filter(r=> !r.billed).reduce((s,r)=>s+r.amount,0);
+    const cardAmt = r => (r.cardFull>0 ? r.cardFull : r.amount);   // 割り勘はカード全額で計算
+    const credTot = credM.reduce((s,r)=>s+cardAmt(r),0);
+    const credBilled = credM.filter(r=> r.billed===true).reduce((s,r)=>s+cardAmt(r),0);
+    const credUnb = credM.filter(r=> !r.billed).reduce((s,r)=>s+cardAmt(r),0);
     const ccBox = $("creditSummary");
     if(credTot>0){
       ccBox.innerHTML = `<div class="creditcard" id="creditCard">
@@ -911,8 +912,9 @@ window.KAKEIBO_EMBEDDED = null;</script>
     if(String(detailCat).startsWith("credit:")){        // クレカ払いだけの一覧（当月）
       items = data.filter(r=> r.type==="expense" && r.pay==="credit" && r.date.slice(0,7)===mk)
                   .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
-      const total = items.reduce((s,r)=>s+r.amount,0);
-      const ub = items.filter(r=>!r.billed).reduce((s,r)=>s+r.amount,0);
+      const cAmt = r => (r.cardFull>0 ? r.cardFull : r.amount);
+      const total = items.reduce((s,r)=>s+cAmt(r),0);
+      const ub = items.filter(r=>!r.billed).reduce((s,r)=>s+cAmt(r),0);
       titleHTML = `💳 クレカ払い <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}（未請求${yen(ub)}）</span>`;
     } else if(String(detailCat).startsWith("lvl:")){           // 4色レベルでの絞り込み
       const key = detailCat.slice(4);
@@ -975,6 +977,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
       if(r.pay==="credit") tags.push(`💳${r.billed?"請求済":'<span class="unb">未請求</span>'}`);
       else tags.push(`${pi.e}${pi.name}`);
     }
+    if(r.cardFull>0 && r.cardFull!==r.amount) tags.push(`💳カード実額${yen(r.cardFull)}（割り勘・自分${yen(r.amount)}）`);
     if(r.type==="expense" && r.ivc){
       const vi = ivcInfo(r.ivc);
       if(r.ivc==="waste") tags.push(`💸浪費${r.regret?REGRET[r.regret].e:""}`);

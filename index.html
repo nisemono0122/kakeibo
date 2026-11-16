@@ -472,7 +472,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v16d";
+  const APP_VERSION = "v16e";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -919,14 +919,14 @@ window.KAKEIBO_EMBEDDED = null;</script>
     } else if(String(detailCat).startsWith("lvl:")){           // 4色レベルでの絞り込み
       const key = detailCat.slice(4);
       const li = levelInfo(key) || {e:"",name:key};
-      items = data.filter(r=> (r.type==="expense"||r.type==="saving") && levelOf(r)===key && r.date.slice(0,7)===mk)
+      items = data.filter(r=> (r.type==="expense"||r.type==="saving") && levelOf(r)===key && r.date.slice(0,7)===mk && !r.cardOnly)
                   .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
       const total = items.reduce((s,r)=>s+r.amount,0);
       titleHTML = `${li.e} ${li.name} <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}</span>`;
     } else if(String(detailCat).startsWith("ivc:")){          // 三分法での絞り込み（浪費だけ 等）
       const key = detailCat.slice(4);
       const vi = ivcInfo(key) || {e:"",name:key};
-      const all = data.filter(r=> r.type==="expense" && (r.ivc||"consume")===key && r.date.slice(0,7)===mk)
+      const all = data.filter(r=> r.type==="expense" && (r.ivc||"consume")===key && r.date.slice(0,7)===mk && !r.cardOnly)
                   .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
       const total = all.reduce((s,r)=>s+r.amount,0);
       if(key==="waste" && all.length){               // 浪費は後悔度3段階（反省/うーん/まあ許容）で分けて表示・絞り込み
@@ -945,7 +945,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
       }
     } else {
       const ci = catInfo("expense", detailCat);
-      items = data.filter(r=> r.type==="expense" && r.cat===detailCat && r.date.slice(0,7)===mk)
+      items = data.filter(r=> r.type==="expense" && r.cat===detailCat && r.date.slice(0,7)===mk && !r.cardOnly)
                   .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
       const total = items.reduce((s,r)=>s+r.amount,0);
       const b = budgetOf(detailCat);
@@ -1004,6 +1004,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   }
 
   function renderHistory(items){
+    items = items.filter(r=> !r.cardOnly);   // カードのみ精算項目は一覧に出さない
     const hist = $("history");
     if(items.length===0){ hist.innerHTML = '<div class="card"><div class="empty">まだ記録がありません。<br>下の「＋ 記録する」から追加しましょう。</div></div>'; return; }
     let html = "", curDay = "";
@@ -1051,7 +1052,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   function renderDayItems(){
     const box = $("dayItems"); if(!box) return;
     if(!selDay){ box.innerHTML = '<div class="empty" style="padding:14px 0">日付をタップするとその日の記録が見られます</div>'; return; }
-    const its = data.filter(r=> r.date===selDay).sort((a,b)=> String(b.id).localeCompare(String(a.id)));
+    const its = data.filter(r=> r.date===selDay && !r.cardOnly).sort((a,b)=> String(b.id).localeCompare(String(a.id)));
     box.innerHTML = `<div class="day">${fmtDay(selDay)}</div>` +
       (its.length ? its.map(oneItemHTML).join("") : '<div class="empty">この日の記録はありません</div>');
     bindItems(box);

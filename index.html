@@ -472,7 +472,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
 (function(){
   "use strict";
   // 自動更新：公開側の version.json が新しければキャッシュを回避して再読み込み
-  const APP_VERSION = "v16f";
+  const APP_VERSION = "v16g";
   (async function(){
     try{
       const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
@@ -541,24 +541,19 @@ window.KAKEIBO_EMBEDDED = null;</script>
   ];
   const REGRET = { 1:{e:"😌",name:"まあ許容"}, 2:{e:"😐",name:"うーん"}, 3:{e:"😣",name:"反省"} };
   // 4色レベル（赤=警報浪費 / 黄=ギリ / 青=必要 / 緑=固定費）
+  // 支出の「使い方」3段階（全支出に付ける）。固定費かどうかはカテゴリで別管理
   const LEVELS = [
-    {k:"red",    name:"完全なムダ遣い", short:"完全ムダ", e:"🔴", c:"#e5343a"},
-    {k:"yellow", name:"ギリ許容の浪費", short:"ギリ許容", e:"🟡", c:"#e8930a"},
-    {k:"blue",   name:"必要な出費",     short:"必要",     e:"🔵", c:"#2f7bf6"},
-    {k:"green",  name:"固定費",         short:"固定費",   e:"🟢", c:"#17935c"},
+    {k:"red",    name:"ムダだった",       short:"ムダだった",   e:"🔴", c:"#e5343a"},
+    {k:"yellow", name:"ムダじゃなかった", short:"ムダじゃない", e:"🟡", c:"#e8930a"},
+    {k:"blue",   name:"必要",             short:"必要",         e:"🔵", c:"#2f7bf6"},
   ];
   const levelInfo = k => LEVELS.find(l=>l.k===k);
-  // 明示のlevelが無ければ、既存の種別/三分法/後悔度から自動判定
+  // 明示のlevelが無ければ、既存の三分法/後悔度から自動判定（固定費・貯蓄は「必要」に）
   function levelOf(r){
     if(r && r.level && levelInfo(r.level)) return r.level;
     if(!r) return "blue";
-    if(r.type==="saving") return "green";
-    if(r.auto || r.cat==="fixed") return "green";
-    if(r.type==="expense"){
-      if(r.ivc==="waste") return (r.regret===3) ? "red" : "yellow";
-      return "blue"; // 消費・投資・未設定
-    }
-    return "blue";
+    if(r.type==="expense" && r.ivc==="waste") return (r.regret===3) ? "red" : "yellow";
+    return "blue"; // 必要（消費・投資・固定費・貯蓄・未設定）
   }
   const SAVING_KEYS = new Set(["savings","nisa"]);
   const ALL = [...CATS.expense, ...CATS.saving, ...CATS.income];
@@ -570,7 +565,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
   let data = loadData();
   let config = loadConfig();
   let view = new Date(); view.setDate(1);
-  let form = { type:"expense", cat:"food", pay:"cash", billed:false, ivc:"consume", regret:2, level:null };
+  let form = { type:"expense", cat:"food", pay:"cash", billed:false, ivc:"consume", regret:2, level:"blue" };
   let rForm = { type:"expense", cat:"food", variable:false };
   let amountStr = "";
   let calcAcc = null, calcOp = null, justEq = false;  // 電卓: 累積値 / 保留中の演算子 / 直前に＝を押したか
@@ -716,38 +711,20 @@ window.KAKEIBO_EMBEDDED = null;</script>
     $("sumOut").textContent = yen(expense);
     $("sumSave").textContent = yen(saving);
 
-    // 三分法（投資・消費・浪費）をトップに3分割表示
-    const ivcSumTop = {invest:0, consume:0, waste:0};
-    items.forEach(r=>{ if(r.type==="expense") ivcSumTop[r.ivc||"consume"] += r.amount; });
-    const teTop = ivcSumTop.invest+ivcSumTop.consume+ivcSumTop.waste;
-    const ivcBox = $("ivc3");
-    if(teTop>0){
-      ivcBox.innerHTML = `<div class="cap">支出の内わけ（投資・消費・浪費）<span style="font-weight:400">— タップで明細</span></div>
-        <div class="stack">
-          <div style="width:${ivcSumTop.invest/teTop*100}%;background:var(--invest)"></div>
-          <div style="width:${ivcSumTop.consume/teTop*100}%;background:var(--consume)"></div>
-          <div style="width:${ivcSumTop.waste/teTop*100}%;background:var(--waste)"></div>
-        </div>
-        <div class="ivc3grid">`+
-        IVC.map(v=>`<div class="box" data-k="${v.k}" style="border-top-color:${v.c}">
-          <div class="t">${v.e} ${v.name} ›</div>
-          <div class="v" style="color:${v.c}">${yen(ivcSumTop[v.k])}</div>
-          <div class="p">${pct(ivcSumTop[v.k],teTop)}%</div></div>`).join("")+
-        `</div>`;
-      ivcBox.querySelectorAll(".box").forEach(bx=> bx.onclick = ()=> openIvcDetail(bx.dataset.k));
-    } else { ivcBox.innerHTML = ""; }
+    // 三分法バーは廃止（使い方3段階に統合）
+    $("ivc3").innerHTML = "";
 
-    // 4色レベル表示（赤=警報浪費 → 緑=固定費）
-    const lvSum = {red:0,yellow:0,blue:0,green:0};
-    items.forEach(r=>{ if(r.type==="expense"||r.type==="saving") lvSum[levelOf(r)] += r.amount; });
-    const lvTot = lvSum.red+lvSum.yellow+lvSum.blue+lvSum.green;
+    // 使い方3段階（🔴ムダだった / 🟡ムダじゃなかった / 🔵必要）
+    const lvSum = {red:0,yellow:0,blue:0};
+    items.forEach(r=>{ if(r.type==="expense") lvSum[levelOf(r)] += r.amount; });
+    const lvTot = lvSum.red+lvSum.yellow+lvSum.blue;
     const lvBox = $("level4");
     if(lvTot>0){
       const redPct = pct(lvSum.red, expense>0?expense:lvTot);
       const banner = lvSum.red>0
-        ? `<div class="wastealert" id="wasteAlert"><span class="wl1">🚨 今月の“完全なムダ遣い”（🔴）</span><span class="wl2">${yen(lvSum.red)}</span><span class="wl3">支出の${redPct}% ・ タップで中身を見る（減らす候補）</span></div>`
+        ? `<div class="wastealert" id="wasteAlert"><span class="wl1">🚨 今月の「ムダだった」出費（🔴）</span><span class="wl2">${yen(lvSum.red)}</span><span class="wl3">支出の${redPct}% ・ タップで中身を見る（減らす候補）</span></div>`
         : "";
-      lvBox.innerHTML = banner + `<div class="cap">色でみる支出（🔴完全ムダ → 🟡ギリ許容 → 🔵必要 → 🟢固定）<span style="font-weight:400">— タップで明細</span></div>
+      lvBox.innerHTML = banner + `<div class="cap">使い方でみる支出（🔴ムダだった → 🟡ムダじゃなかった → 🔵必要）<span style="font-weight:400">— タップで明細</span></div>
         <div class="stack">`+
         LEVELS.map(l=>`<div style="width:${lvSum[l.k]/lvTot*100}%;background:${l.c}"></div>`).join("")+
         `</div><div class="lv4grid">`+
@@ -922,7 +899,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     } else if(String(detailCat).startsWith("lvl:")){           // 4色レベルでの絞り込み
       const key = detailCat.slice(4);
       const li = levelInfo(key) || {e:"",name:key};
-      items = data.filter(r=> (r.type==="expense"||r.type==="saving") && levelOf(r)===key && r.date.slice(0,7)===mk && !r.cardOnly)
+      items = data.filter(r=> r.type==="expense" && levelOf(r)===key && r.date.slice(0,7)===mk && !r.cardOnly)
                   .sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
       const total = items.reduce((s,r)=>s+r.amount,0);
       titleHTML = `${li.e} ${li.name} <span style="color:var(--sub);font-weight:400;font-size:13px">${(view.getMonth()+1)}月 ${items.length}件 計${yen(total)}</span>`;
@@ -971,7 +948,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
     const ci = catInfo(r.type, r.cat);
     const sign = r.type==="income" ? "+" : "−";
     const cls = r.type==="income" ? "plus" : r.type==="saving" ? "save" : "minus";
-    const lc = (r.type==="expense"||r.type==="saving") ? levelInfo(levelOf(r)) : null;
+    const lc = (r.type==="expense") ? levelInfo(levelOf(r)) : null;
     const tags=[];
     if(lc) tags.push(`<span style="color:${lc.c};font-weight:800">${lc.e}${lc.short}</span>`);
     if(r.estimate) tags.push('<span class="est">🔶見込み(要確認)</span>');
@@ -981,11 +958,6 @@ window.KAKEIBO_EMBEDDED = null;</script>
       else tags.push(`${pi.e}${pi.name}`);
     }
     if(r.cardFull>0 && r.cardFull!==r.amount) tags.push(`💳カード実額${yen(r.cardFull)}（割り勘・自分${yen(r.amount)}）`);
-    if(r.type==="expense" && r.ivc){
-      const vi = ivcInfo(r.ivc);
-      if(r.ivc==="waste") tags.push(`💸浪費${r.regret?REGRET[r.regret].e:""}`);
-      else if(vi && r.ivc!=="consume") tags.push(`${vi.e}${vi.name}`);
-    }
     const tagLine = tags.length ? `<div class="tags">${tags.join(" ・ ")}</div>` : "";
     const amtHTML = (r.estimate && r.amount===0)
       ? `<div class="amt" style="color:var(--warn)">未入力</div>`
@@ -1096,22 +1068,20 @@ window.KAKEIBO_EMBEDDED = null;</script>
     const monthExp = data.filter(r=> r.type==="expense" && r.date.slice(0,7)===mk);
     let html = "";
 
-    // 三分法
-    const ivcSum = {invest:0, consume:0, waste:0};
-    monthExp.forEach(r=> ivcSum[r.ivc||"consume"] += r.amount);
-    const totalE = ivcSum.invest+ivcSum.consume+ivcSum.waste;
-    html += `<div class="card"><h2>投資・消費・浪費（三分法）</h2>`;
+    // 使い方（必要 / ムダじゃなかった / ムダだった）
+    const lvSumA = {red:0,yellow:0,blue:0};
+    monthExp.forEach(r=> lvSumA[levelOf(r)] += r.amount);
+    const totalE = lvSumA.red+lvSumA.yellow+lvSumA.blue;
+    html += `<div class="card"><h2>使い方（必要・ムダじゃない・ムダ）</h2>`;
     if(totalE<=0){ html += `<div class="empty">今月の支出記録がありません</div>`; }
     else {
-      html += `<div class="stack">
-        <div style="width:${ivcSum.invest/totalE*100}%;background:var(--invest)"></div>
-        <div style="width:${ivcSum.consume/totalE*100}%;background:var(--consume)"></div>
-        <div style="width:${ivcSum.waste/totalE*100}%;background:var(--waste)"></div></div>`;
-      IVC.forEach(v=> html += `<div class="legrow"><span class="dot" style="background:${v.c}"></span>
-        <span class="ln">${v.e} ${v.name}</span><span class="lv">${yen(ivcSum[v.k])}</span>
-        <span class="lp">${pct(ivcSum[v.k],totalE)}%</span></div>`);
-      const wr = pct(ivcSum.waste,totalE);
-      html += `<div class="hint" style="margin-top:8px">${wr>=20?`💸 浪費が支出の${wr}%です。減らせる余地があるかも。`:`👍 浪費は支出の${wr}%。良いバランスです。`}</div>`;
+      html += `<div class="stack">`+
+        LEVELS.map(l=>`<div style="width:${lvSumA[l.k]/totalE*100}%;background:${l.c}"></div>`).join("")+`</div>`;
+      LEVELS.forEach(l=> html += `<div class="legrow"><span class="dot" style="background:${l.c}"></span>
+        <span class="ln">${l.e} ${l.name}</span><span class="lv">${yen(lvSumA[l.k])}</span>
+        <span class="lp">${pct(lvSumA[l.k],totalE)}%</span></div>`);
+      const rr = pct(lvSumA.red,totalE);
+      html += `<div class="hint" style="margin-top:8px">${rr>=15?`🔴 「ムダだった」が支出の${rr}%。来月の削り候補です。`:`👍 「ムダだった」は支出の${rr}%。良い感じです。`}</div>`;
     }
     html += `</div>`;
 
@@ -1143,12 +1113,18 @@ window.KAKEIBO_EMBEDDED = null;</script>
       <span class="lv">${yen(paySum[p.k])}</span><span class="lp">${pct(paySum[p.k],totalE)}%</span></div>`);
     html += `</div>`;
 
-    // 浪費トップ
-    const wastes = monthExp.filter(r=> r.ivc==="waste").sort((a,b)=> b.amount-a.amount).slice(0,5);
-    html += `<div class="card"><h2>今月の浪費トップ</h2>`;
-    if(wastes.length===0) html += `<div class="empty">浪費の記録はありません 🎉</div>`;
-    else wastes.forEach(r=>{ const ci=catInfo("expense",r.cat);
-      html += `<div class="miniitem"><span>${r.regret?REGRET[r.regret].e:"💸"}</span>
+    // 今月のムダ遣い（🔴ムダだった）＋先月比＋トップ
+    const curRed = lvSumA.red;
+    const prevRed = data.filter(r=> r.type==="expense" && r.date.slice(0,7)===prevMK && levelOf(r)==="red").reduce((s,r)=>s+r.amount,0);
+    const rDiff = curRed - prevRed;
+    const reds = monthExp.filter(r=> levelOf(r)==="red").sort((a,b)=> b.amount-a.amount).slice(0,5);
+    html += `<div class="card"><h2>今月のムダ遣い（🔴ムダだった）</h2>
+      <div class="kpi"><span class="v" style="color:${curRed>0?'var(--minus)':'var(--ink)'}">${yen(curRed)}</span>
+        ${prevRed>0?`<span class="d ${rDiff>0?'up':rDiff<0?'down':''}">${rDiff>0?"▲":rDiff<0?"▼":""}${yen(Math.abs(rDiff))}</span>`:`<span class="d">先月データなし</span>`}</div>
+      <div class="hint">先月のムダ ${yen(prevRed)}</div>`;
+    if(reds.length===0) html += `<div class="empty" style="margin-top:8px">🔴の記録はありません 🎉</div>`;
+    else reds.forEach(r=>{ const ci=catInfo("expense",r.cat);
+      html += `<div class="miniitem"><span>🔴</span>
         <span class="mi">${ci.name}${r.memo?" ・ "+esc(r.memo):""}</span><span class="mv">${yen(r.amount)}</span></div>`; });
     html += `</div>`;
 
@@ -1208,18 +1184,11 @@ window.KAKEIBO_EMBEDDED = null;</script>
         <button data-b="1" class="${form.billed?'on':''}">請求済（引落済）</button></div>`;
     }
     if(isExp){
-      h += `<label>投資・消費・浪費</label><div class="chips ivc" id="ivcChips">`;
-      IVC.forEach(v=> h += `<button data-v="${v.k}" class="${form.ivc===v.k?'on':''}" style="--cc:${v.c}">${v.e} ${v.name}</button>`);
-      h += `</div>`;
-      if(form.ivc==="waste"){
-        h += `<label>浪費の自己評価（後悔度）</label><div class="chips" id="regretChips">`;
-        Object.keys(REGRET).forEach(k=> h += `<button data-r="${k}" class="${String(form.regret)===k?'on':''}">${REGRET[k].e} ${REGRET[k].name}</button>`);
-        h += `</div>`;
-      }
-      const effLv = levelOf({type:form.type,cat:form.cat,ivc:form.ivc,regret:form.regret,level:form.level});
-      h += `<label>色レベル（未選択＝自動：${levelInfo(effLv).e}${levelInfo(effLv).short}）</label><div class="chips lv" id="lvChips">`;
-      h += `<button data-l="" class="${!form.level?'on':''}" style="${!form.level?'background:var(--sub)':''}">自動</button>`;
-      LEVELS.forEach(l=> h += `<button data-l="${l.k}" class="${form.level===l.k?'on':''}" style="${form.level===l.k?'background:'+l.c:'--cc:'+l.c+';color:'+l.c}">${l.e}${l.short}</button>`);
+      // このお金の使い方（必要 / ムダじゃなかった / ムダだった）
+      if(!form.level) form.level = "blue";
+      h += `<label>このお金の使い方</label><div class="chips lv" id="lvChips">`;
+      ["blue","yellow","red"].forEach(k=>{ const l=levelInfo(k);
+        h += `<button data-l="${l.k}" class="${form.level===l.k?'on':''}" style="${form.level===l.k?'background:'+l.c+';color:#fff':'--cc:'+l.c+';color:'+l.c}">${l.e} ${l.name}</button>`; });
       h += `</div>`;
     }
     $("formTags").innerHTML = h;
@@ -1227,11 +1196,7 @@ window.KAKEIBO_EMBEDDED = null;</script>
       form.pay=b.dataset.p; if(form.pay!=="credit") form.billed=false; renderFormTags();
     });
     if($("billSeg")) $("billSeg").querySelectorAll("button").forEach(b=> b.onclick = ()=>{ form.billed=b.dataset.b==="1"; renderFormTags(); });
-    if($("ivcChips")) $("ivcChips").querySelectorAll("button").forEach(b=> b.onclick = ()=>{
-      form.ivc=b.dataset.v; if(form.ivc!=="waste") form.regret=null; else if(!form.regret) form.regret=2; renderFormTags();
-    });
-    if($("regretChips")) $("regretChips").querySelectorAll("button").forEach(b=> b.onclick = ()=>{ form.regret=+b.dataset.r; renderFormTags(); });
-    if($("lvChips")) $("lvChips").querySelectorAll("button").forEach(b=> b.onclick = ()=>{ form.level = b.dataset.l||null; renderFormTags(); });
+    if($("lvChips")) $("lvChips").querySelectorAll("button").forEach(b=> b.onclick = ()=>{ form.level = b.dataset.l; renderFormTags(); });
   }
   function setType(t){
     form.type = t;
@@ -1284,14 +1249,14 @@ window.KAKEIBO_EMBEDDED = null;</script>
     $("modal").classList.add("show");
   }
   function openModal(){
-    openModalWith({ type:"expense", cat:"food", pay:"cash", billed:false, ivc:"consume", regret:2, level:null }, "", todayISO(), "", null, "");
+    openModalWith({ type:"expense", cat:"food", pay:"cash", billed:false, ivc:"consume", regret:2, level:"blue" }, "", todayISO(), "", null, "");
   }
   function openEdit(id){
     const r = data.find(x=> String(x.id)===String(id));
     if(!r) return;
     const seg = r.type==="income" ? "income" : "expense";
     openModalWith(
-      { type:seg, cat:r.cat, pay:r.pay||"cash", billed:!!r.billed, ivc:r.ivc||"consume", regret:r.regret||2, level:r.level||null },
+      { type:seg, cat:r.cat, pay:r.pay||"cash", billed:!!r.billed, ivc:r.ivc||"consume", regret:r.regret||2, level:(seg==="expense"?levelOf(r):null) },
       String(r.amount), r.date, r.memo||"", r.id,
       r.auto ? "固定費から自動入力された記録です（この月の分だけ変更されます）" : ""
     );
@@ -1332,8 +1297,11 @@ window.KAKEIBO_EMBEDDED = null;</script>
     const dateStr = $("inDate").value||todayISO();
     const base = { type:t, cat:form.cat, amount:amt, date:dateStr, memo:$("inMemo").value.trim(), pay:form.pay };
     if(form.pay==="credit") base.billed = form.billed;
-    if(t==="expense"){ base.ivc = form.ivc; if(form.ivc==="waste") base.regret = form.regret; }
-    if(form.level) base.level = form.level;
+    if(t==="expense"){
+      base.level = form.level || "blue";               // 使い方（必要/ムダじゃない/ムダ）＝主データ
+      base.ivc = (base.level==="blue") ? "consume" : "waste";   // 旧項目も互換で保持
+      if(base.level==="red") base.regret = 3; else if(base.level==="yellow") base.regret = 2;
+    }
     if(editingId){
       const i = data.findIndex(x=> String(x.id)===String(editingId));
       if(i>=0){
